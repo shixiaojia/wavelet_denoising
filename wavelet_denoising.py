@@ -41,10 +41,10 @@ class DWT_DB2(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.channels = channels
-        self.dec_conv_ll = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels)
-        self.dec_conv_lh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels)
-        self.dec_conv_hl = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels)
-        self.dec_conv_hh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels)
+        self.dec_conv_ll = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
+        self.dec_conv_lh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
+        self.dec_conv_hl = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
+        self.dec_conv_hh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
 
         self.threshold = ThresholdLayer()
 
@@ -80,10 +80,10 @@ class IDWT_DB2(nn.Module):
         super().__init__()
         self.channels = channels
         self.upsample = nn.Upsample(scale_factor=2)
-        self.rec_conv_ll = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels)
-        self.rec_conv_lh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels)
-        self.rec_conv_hl = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels)
-        self.rec_conv_hh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels)
+        self.rec_conv_ll = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
+        self.rec_conv_lh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
+        self.rec_conv_hl = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
+        self.rec_conv_hh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
 
         self.reset_parameters()
 
@@ -151,7 +151,9 @@ h, w = image.shape
 
 image = torch.asarray(image, dtype=torch.float32).view(1, 1, h, w).to(device)
 
-net = DWT_Net(channels=1, levels=1).to(device)
+image = torch.asarray(image, dtype=torch.float32).to(device)
+
+net = DWT_Net(channels=1, levels=2).to(device)
 ans = net(image)
 
 ans = ans.squeeze(dim=(0, 1)).detach().cpu().numpy()
