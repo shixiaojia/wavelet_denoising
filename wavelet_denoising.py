@@ -4,11 +4,12 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pywt
-from torchsummary import summary
+
 
 def get_db2_filters():
     wavelet = pywt.Wavelet('db2')
-    dec_lo, dec_hi, rec_lo, rec_hi = wavelet.filter_bank
+    # dec_lo, dec_hi, rec_lo, rec_hi = wavelet.filter_bank
+    dec_lo, dec_hi, rec_lo, rec_hi = wavelet.dec_lo, wavelet.dec_hi, wavelet.rec_lo, wavelet.rec_hi
     return (
         torch.Tensor(dec_lo),  # 分解低通
         torch.Tensor(dec_hi),  # 分解高通
@@ -51,7 +52,6 @@ class DWT_DB2_Conv(nn.Module):
         self.reset_parameters()
 
         self.channels = channels
-        # self.pool = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def reset_parameters(self):
         # 分解过程的低通和高通滤波器权重
@@ -70,16 +70,12 @@ class DWT_DB2_Conv(nn.Module):
         # 阈值处理
         ll, lh, hl, hh = self.threshold((ll, lh, hl, hh))
 
-        # 下采样
-        # ll, lh, hl, hh = self.pool(ll), self.pool(lh), self.pool(hl), self.pool(hh)
-
         return ll, lh, hl, hh  # 返回四个子带（LL, LH, HL, HH）
 
 class IDWT_DB2_Conv(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.channels = channels
-        self.upsample = nn.Upsample(scale_factor=2)
         self.rec_conv_ll = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
         self.rec_conv_lh = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
         self.rec_conv_hl = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=4, stride=1, padding='same', groups=channels, bias=False)
@@ -103,22 +99,7 @@ class IDWT_DB2_Conv(nn.Module):
         hl = self.rec_conv_hl(hl)
         hh = self.rec_conv_hh(hh)
 
-
         return ll + lh + hl + hh
-
-class Upsample(nn.Module):
-    def __init__(self, scale_factor):
-        super().__init__()
-        self.up_sample = nn.Upsample(scale_factor=scale_factor)
-
-    def forward(self, x):
-        ll, lh, hl, hh = x
-        ll = self.up_sample(ll)
-        lh = self.up_sample(lh)
-        hl = self.up_sample(hl)
-        hh = self.up_sample(hh)
-
-        return ll, lh, hl, hh
 
 
 class Downsample(nn.Module):
@@ -151,6 +132,13 @@ class Concat(nn.Module):
         return out1, out2, out3, out4
 
 
+def upsample(input):
+    N, C, H, W = input.shape
+    output = torch.zeros(N, C, 2 * H, 2 * W, dtype=input.dtype, device=input.device)
+    output[:, :, ::2, ::2] = input
+    return output
+
+
 class DWT_Net(nn.Module):
     def __init__(self, channels, levels):
         super().__init__()
@@ -158,7 +146,6 @@ class DWT_Net(nn.Module):
         self.enc_convs = nn.ModuleList()
         self.down_sample = Downsample(kernel_size=2, stride=2)
         self.dec_convs = nn.ModuleList()
-        self.up_sample = Upsample(scale_factor=2)
         self.convs = nn.ModuleList()
         self.cat = Concat(dim=1)
 
@@ -171,6 +158,7 @@ class DWT_Net(nn.Module):
 
             self.convs.append(nn.Conv2d(in_channels=2 * channels, out_channels=channels, kernel_size=3, stride=1, padding=1))
 
+        self.mid_conv = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=3, stride=1, padding=1)
 
     def forward(self, x):
         coeff_list = []
@@ -184,9 +172,16 @@ class DWT_Net(nn.Module):
             coeff_list.append((lh, hl, hh))
             x = ll
 
+        x = self.mid_conv(x)
+
         for conv, dec_conv in zip(self.convs, self.dec_convs):
             lh, hl, hh = coeff_list.pop()
-            x, lh, hl, hh = self.up_sample((x, lh, hl, hh))
+
+            # up sample
+            x = upsample(x)
+            lh = upsample(lh)
+            hl = upsample(hl)
+            hh = upsample(hh)
 
             skip_ll, skip_lh, skip_hl, skip_hh = skip_list.pop()
             x, lh, hl, hh = self.cat((x, lh, hl, hh), (skip_ll, skip_lh, skip_hl, skip_hh))
@@ -213,7 +208,10 @@ class DWT_Net(nn.Module):
             lh, hl, hh = coeff_list.pop()
 
             # up sample
-            x, lh, hl, hh = self.up_sample((x, lh, hl, hh))
+            x = upsample(x)
+            lh = upsample(lh)
+            hl = upsample(hl)
+            hh = upsample(hh)
 
             # reconstruction
             x = dec_conv((x, lh, hl, hh))
@@ -221,7 +219,7 @@ class DWT_Net(nn.Module):
         return x
 
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu' if torch.cuda.is_available() else 'cpu')
 
 image = cv2.imread('noisy_image.jpg')
 image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -237,12 +235,10 @@ net = DWT_Net(channels=1, levels=2).to(device)
 ans = net.forward_gt(image)
 
 torch.save(net.state_dict(), "./model.pth")
-# summary(model=net, input_size=(1, 256, 256))
 
 ans = ans.squeeze(dim=(0, 1)).detach().cpu().numpy()
 
-ans = np.uint8((ans - ans.min())/ (ans.max() - ans.min()) * 255)
-
+ans = np.clip(ans, 0, 255).astype(np.uint8)
 
 cv2.namedWindow("noisy image")
 cv2.imshow("noisy image", ori_img)
@@ -250,3 +246,6 @@ cv2.imshow("noisy image", ori_img)
 cv2.namedWindow("denoised image")
 cv2.imshow("denoised image", ans)
 cv2.waitKey(0)
+
+cv2.imwrite('gray_noisy.jpg', ori_img)
+cv2.imwrite('denoised_result.jpg', ans)
